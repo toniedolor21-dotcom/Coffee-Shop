@@ -91,3 +91,21 @@ th { font-size: 13px; color: var(--muted); font-weight: 600; }
   .pos { padding-bottom: 70px; }
   .cart { position: static; }
 }
+
+/* Recipes */
+.recipe-btn { padding: 3px 10px; font-size: 13px; font-weight: 500; }
+.product .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.product .head h3 { margin: 0; flex: 1; }
+.cart-line .recipe-link { background: none; border: none; padding: 0; color: var(--accent); font-size: 13px; text-decoration: underline; }
+.recipe-dialog { border: none; border-radius: var(--radius); padding: 20px; width: min(640px, 94vw); max-height: 90vh; color: var(--ink); }
+.recipe-dialog::backdrop { background: rgba(43,29,20,.45); }
+.recipe-dialog h3 { font-size: 15px; margin: 16px 0 6px; }
+.recipe-head { margin-bottom: 12px; }
+.recipe-ing td:not(:first-child), .recipe-ing th:not(:first-child) { text-align: center; }
+.recipe-ing .hl { background: #fbf0e2; font-weight: 700; }
+.recipe-steps { margin: 0; padding-left: 22px; }
+.recipe-steps li { margin: 4px 0; }
+.recipe-edit td { padding: 4px; }
+.recipe-edit input { width: 100%; min-width: 70px; }
+.recipe-edit input[data-k=item] { min-width: 170px; }
+.recipe-dialog textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; resize: vertical; }

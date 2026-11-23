@@ -43,6 +43,7 @@
 </main>
 <button id="mobileBar" class="primary" hidden></button>
 <script src="/common.js"></script>
+<script src="/recipes.js"></script>
 <script>
 header('order');
 let products = [];
@@ -74,11 +75,13 @@ function renderMenu() {
         return price === undefined ? '<span></span>'
           : `<button class="size-btn" data-id="${p.id}" data-t="${t}" data-s="${s}"><small>${s}</small><b>${peso(price).replace('.00', '')}</b></button>`;
       }).join('')}</div>`).join('');
-    return `<div class="card product"><h3>${esc(p.name)}</h3>${rows}</div>`;
+    return `<div class="card product"><div class="head"><h3>${esc(p.name)}</h3><button class="recipe-btn" data-recipe="${p.id}" title="Ingredients and how to make it">Recipe</button></div>${rows}</div>`;
   }).join('');
 }
 
 $('#menu').addEventListener('click', (e) => {
+  const rb = e.target.closest('[data-recipe]');
+  if (rb) return showRecipe(products.find((x) => x.id === Number(rb.dataset.recipe)));
   const b = e.target.closest('.size-btn');
   if (!b) return;
   if (!$('#doneView').hidden) newOrder();
@@ -97,7 +100,7 @@ function renderCart() {
   const items = $('#items');
   items.innerHTML = cart.length ? cart.map((l, i) => `
     <div class="cart-line">
-      <div><b>${esc(l.name)}</b><br><span class="tag ${l.temp}">${l.temp}</span> <span class="muted">${l.size} · ${peso(l.price)}</span></div>
+      <div><b>${esc(l.name)}</b><br><span class="tag ${l.temp}">${l.temp}</span> <span class="muted">${l.size} · ${peso(l.price)}</span> <button class="recipe-link" data-recipe-i="${i}">Recipe</button></div>
       <div class="qty"><button data-i="${i}" data-d="-1" aria-label="Less">−</button><span>${l.qty}</span><button data-i="${i}" data-d="1" aria-label="More">+</button></div>
       <div class="num" style="min-width:76px">${peso(l.price * l.qty)}</div>
     </div>`).join('') : '<p class="muted" style="text-align:center;margin:24px 0">No items yet</p>';
@@ -115,6 +118,12 @@ function renderCart() {
 }
 
 $('#items').addEventListener('click', (e) => {
+  const rb = e.target.closest('[data-recipe-i]');
+  if (rb) {
+    const l = cart[Number(rb.dataset.recipeI)];
+    const p = products.find((x) => x.id === l.productId);
+    return p && showRecipe(p, { temp: l.temp, size: l.size });
+  }
   const b = e.target.closest('button[data-i]');
   if (!b) return;
   const l = cart[Number(b.dataset.i)];

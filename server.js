@@ -105,6 +105,8 @@ function requireAdmin(req) {
   if (req.headers['x-admin-pin'] !== ADMIN_PIN) throw new HttpError(401, 'Wrong admin PIN');
 }
 
+const handleRecipes = require('./recipes').setupRecipes(db, { HttpError, send, readJson, requireAdmin, TEMPS, SIZES });
+
 function listProducts(includeInactive) {
   const products = db.prepare(
     `SELECT id, category, name, active, sort FROM products ${includeInactive ? '' : 'WHERE active = 1'} ORDER BY sort, id`
@@ -252,6 +254,7 @@ async function handle(req, res) {
   const m = req.method;
 
   if (p.startsWith('/api/')) {
+    if (await handleRecipes(req, res, url)) return;
     if (m === 'GET' && p === '/api/products') return send(res, 200, listProducts(false));
     if (m === 'POST' && p === '/api/orders') return send(res, 201, createOrder(await readJson(req)));
     // Everything below needs the admin PIN.
