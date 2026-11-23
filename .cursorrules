@@ -1,0 +1,49 @@
+# Cursor rules for Coffee POS
+# Same rules as CLAUDE.md (the fuller version). Keep the two files in step when either changes.
+
+## Project
+Coffee POS: order taking for one small coffee shop in the Philippines. One computer runs `node server.js`; phones, tablets and laptops on the same Wi-Fi use it in a browser. Pages: order screen (`/`, no PIN), Products & prices with recipes and AI settings (`/admin`, PIN), Sales reports with order voiding and optional AI summary/questions (`/reports`, PIN). Users are non-technical staff and the owner.
+
+## Stack
+- Node.js 22.13+, zero npm dependencies, no build step. Built-ins only: `node:http`, `node:sqlite` (`DatabaseSync`), global `fetch`.
+- Frontend: plain HTML pages in `public/` with inline `<script>` blocks, shared `common.js`, `recipes.js`, `app.css`. No framework, no bundler.
+- Run: `node server.js` (or `npm start`, or `start-windows.bat`). Env: `PORT` (3000), `ADMIN_PIN` (1234), `TZ` (Asia/Manila), `DB_FILE` (data/coffee.db), `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AI_PROVIDER` (openai|anthropic|off), `AI_MODEL`.
+- Test against a throwaway DB: `DB_FILE=/tmp/test.db PORT=3001 node server.js`. No test suite or linter; verify by running the app or curling the API with `X-Admin-Pin`.
+
+## Files
+- `server.js`: server, schema and seed, products, orders, reports, AI routes, static files.
+- `recipes.js` / `recipes-seed.js`: recipe table, routes, starter recipes (placeholders). Hooked in via `setupRecipes(db, helpers)`.
+- `ai.js`: optional AI (OpenAI default `gpt-5-mini`, Claude default `claude-haiku-5-5`), built-in fetch, prompts.
+- `public/index.html` order screen; `public/admin.html` products, recipes, AI settings; `public/reports.html` reports, orders, CSV/print, AI.
+- `public/common.js` helpers: `api()`, `peso()`, `esc()`, `$()`, `toast()`, `header()`, `requirePin()`.
+
+## Data (data/coffee.db, SQLite, WAL, foreign keys on)
+- `products`, `prices` (temp Hot/Cold x size Small/Medium/Large; missing row = size not sold).
+- `orders`: `created_at` is local-time text `YYYY-MM-DD HH:MM:SS`; reports group by prefix. `status` is `paid` or `void`.
+- `order_items`: `product_name`, `category`, `unit_price`, `line_total` are snapshots at time of sale.
+- `recipes` (JSON ingredients/steps per product and temp), `settings` (`ai_*` keys, including API keys).
+- Schema changes must be additive and safe on an existing shop database. Never drop or rewrite sales data.
+
+## API
+- Open: `GET /api/products`, `POST /api/orders`, `GET /api/recipes/:id`.
+- All other routes need the `X-Admin-Pin` header.
+- Throw `HttpError(status, message)`; messages are shown to staff, so use plain English that says what to do.
+
+## Rules (must follow)
+1. The order screen never depends on AI. `index.html`, `GET /api/products` and `POST /api/orders` never call `ai.js` or any outside service and work the same with no key, no internet, or a failing provider. AI is admin-only and optional.
+2. Prices are saved on each order. `createOrder` reads the current DB price at sale time and stores it on the line. Never compute past totals from the current `prices` table, never trust browser-sent prices, keep the `expectedTotal` check.
+3. Works offline on a shop LAN. No CDNs, web fonts, external scripts or images, analytics, or remote calls outside the optional AI assistant.
+4. No new dependencies, frameworks or build steps without the owner's explicit approval.
+5. No secrets or data in git: never commit `data/`, `*.db` files, API keys or a real admin PIN. Keep `.gitignore` excluding them. API keys stay in `settings` or env vars and are never sent to the browser (only `maskKey()` hints).
+6. Customer names never go to the AI. Keep `summaryData()` and `askContext()` to aggregated totals, product names, prices and quantities.
+7. Money is pesos: round with `money()` on the server, display with `peso()` as ₱1,250.00. Validate quantities and amounts on the server.
+8. Voided orders stay in the DB with `status = 'void'` and are excluded from all reports and AI figures.
+9. Escape user text with `esc()` before inserting into HTML.
+10. Keep the UI simple for staff: large touch targets, plain wording, fast on a phone.
+
+## Conventions
+- CommonJS, 2-space indent, single quotes, semicolons; match surrounding style.
+- Prepared statements with `?` params for all SQL; multi-row writes in BEGIN/COMMIT with ROLLBACK on error.
+- Grow features as separate modules with a small hook into `server.js`, like `recipes.js` and `ai.js`.
+- Saved admin AI settings win over environment variables.
+- Update `README.md` (written for the non-technical owner) when behaviour, settings or files change.
