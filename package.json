@@ -1,0 +1,9 @@
+{
+  "name": "coffee-pos",
+  "version": "1.0.0",
+  "description": "Order taking and daily, monthly and annual sales reports for a coffee shop",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=22.13" },
+  "private": true
+}

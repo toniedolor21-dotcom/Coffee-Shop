@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Take order · Coffee POS</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>☕</text></svg>">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main>
+  <div class="pos">
+    <section>
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0">Menu</h2><span class="spacer"></span>
+        <span class="muted" style="font-size:13px">Tap a size to add it to the order</span>
+      </div>
+      <div class="menu" id="menu"><p class="muted">Loading products…</p></div>
+    </section>
+
+    <aside class="card cart" id="cart">
+      <div id="orderForm">
+        <label for="customer">Customer name (optional)</label>
+        <input id="customer" maxlength="100" style="width:100%" placeholder="e.g. Ana">
+        <div class="cart-items" id="items"></div>
+        <div class="totals">
+          <div class="line"><span>Total to pay</span><span class="big" id="total">₱0.00</span></div>
+          <div class="line">
+            <label for="received" style="margin:0;font-size:16px;color:var(--ink)">Amount received</label>
+            <input id="received" type="number" inputmode="decimal" min="0" step="any" placeholder="0.00">
+          </div>
+          <div class="quick" id="quick"></div>
+          <div class="line"><span>Change</span><span class="big change" id="change">₱0.00</span></div>
+          <div class="row" style="margin-top:6px">
+            <button id="clear">Clear</button><span class="spacer"></span>
+            <button class="primary" id="submit" disabled style="padding:12px 22px">Complete order</button>
+          </div>
+        </div>
+      </div>
+      <div id="doneView" class="done" hidden></div>
+    </aside>
+  </div>
+</main>
+<button id="mobileBar" class="primary" hidden></button>
+<script src="/common.js"></script>
+<script>
+header('order');
+let products = [];
+let cart = []; // { key, productId, name, temp, size, price, qty }
+let saving = false;
+
+async function loadProducts(silent) {
+  try {
+    products = await api('/api/products');
+    renderMenu();
+    // Keep the cart in step with current prices; drop items that are no longer sold.
+    cart = cart.filter((l) => {
+      const p = products.find((x) => x.id === l.productId);
+      const price = p?.prices[`${l.temp}|${l.size}`];
+      if (price === undefined) return false;
+      l.price = price; l.name = p.name; return true;
+    });
+    renderCart();
+  } catch (e) { if (!silent) toast('Could not load products: ' + e.message, true); }
+}
+
+function renderMenu() {
+  const menu = $('#menu');
+  if (!products.length) { menu.innerHTML = '<p class="muted">No products yet. Add some under Products & prices.</p>'; return; }
+  menu.innerHTML = products.map((p) => {
+    const rows = TEMPS.filter((t) => SIZES.some((s) => p.prices[`${t}|${s}`] !== undefined)).map((t) => `
+      <div class="temp-row"><span class="t ${t}">${t}</span>${SIZES.map((s) => {
+        const price = p.prices[`${t}|${s}`];
+        return price === undefined ? '<span></span>'
+          : `<button class="size-btn" data-id="${p.id}" data-t="${t}" data-s="${s}"><small>${s}</small><b>${peso(price).replace('.00', '')}</b></button>`;
+      }).join('')}</div>`).join('');
+    return `<div class="card product"><h3>${esc(p.name)}</h3>${rows}</div>`;
+  }).join('');
+}
+
+$('#menu').addEventListener('click', (e) => {
+  const b = e.target.closest('.size-btn');
+  if (!b) return;
+  if (!$('#doneView').hidden) newOrder();
+  const p = products.find((x) => x.id === Number(b.dataset.id));
+  const { t, s } = b.dataset;
+  const key = `${p.id}|${t}|${s}`;
+  const line = cart.find((l) => l.key === key);
+  if (line) line.qty++;
+  else cart.push({ key, productId: p.id, name: p.name, temp: t, size: s, price: p.prices[`${t}|${s}`], qty: 1 });
+  renderCart();
+});
+
+const total = () => Math.round(cart.reduce((sum, l) => sum + l.price * l.qty, 0) * 100) / 100;
+
+function renderCart() {
+  const items = $('#items');
+  items.innerHTML = cart.length ? cart.map((l, i) => `
+    <div class="cart-line">
+      <div><b>${esc(l.name)}</b><br><span class="tag ${l.temp}">${l.temp}</span> <span class="muted">${l.size} · ${peso(l.price)}</span></div>
+      <div class="qty"><button data-i="${i}" data-d="-1" aria-label="Less">−</button><span>${l.qty}</span><button data-i="${i}" data-d="1" aria-label="More">+</button></div>
+      <div class="num" style="min-width:76px">${peso(l.price * l.qty)}</div>
+    </div>`).join('') : '<p class="muted" style="text-align:center;margin:24px 0">No items yet</p>';
+  const t = total();
+  $('#total').textContent = peso(t);
+  const count = cart.reduce((n, l) => n + l.qty, 0);
+  $('#mobileBar').hidden = !count;
+  $('#mobileBar').textContent = `View order · ${count} item${count === 1 ? '' : 's'} · ${peso(t)}`;
+  // quick cash buttons: exact amount plus common bills above the total
+  const bills = [50, 100, 200, 500, 1000].filter((b) => b > t).slice(0, 3);
+  const round100 = Math.ceil(t / 100) * 100;
+  const options = [...new Set([t, round100, ...bills].filter((v) => v > 0))].sort((a, b) => a - b).slice(0, 5);
+  $('#quick').innerHTML = cart.length ? options.map((v) => `<button data-v="${v}">${v === t ? 'Exact' : peso(v).replace('.00', '')}</button>`).join('') : '';
+  updateChange();
+}
+
+$('#items').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-i]');
+  if (!b) return;
+  const l = cart[Number(b.dataset.i)];
+  l.qty += Number(b.dataset.d);
+  if (l.qty <= 0) cart.splice(Number(b.dataset.i), 1);
+  renderCart();
+});
+$('#quick').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-v]');
+  if (b) { $('#received').value = b.dataset.v; updateChange(); }
+});
+$('#received').addEventListener('input', updateChange);
+$('#mobileBar').addEventListener('click', () => $('#cart').scrollIntoView({ behavior: 'smooth' }));
+
+function updateChange() {
+  const t = total();
+  const raw = $('#received').value;
+  const r = Number(raw);
+  const el = $('#change');
+  if (raw === '' || !cart.length) { el.textContent = peso(0); el.className = 'big change'; }
+  else if (r < t) { el.textContent = 'Short ' + peso(t - r); el.className = 'big change bad'; }
+  else { el.textContent = peso(r - t); el.className = 'big change ok'; }
+  $('#submit').disabled = saving || !cart.length || raw === '' || !(r >= t);
+}
+
+$('#clear').addEventListener('click', () => { cart = []; $('#received').value = ''; $('#customer').value = ''; renderCart(); });
+
+async function submitOrder() {
+  if ($('#submit').disabled) return;
+  saving = true; updateChange();
+  try {
+    const order = await api('/api/orders', { method: 'POST', body: {
+      customerName: $('#customer').value,
+      items: cart.map((l) => ({ productId: l.productId, temp: l.temp, size: l.size, qty: l.qty })),
+      received: Number($('#received').value),
+      expectedTotal: total(),
+    }});
+    showDone(order);
+  } catch (e) {
+    toast(e.message, true);
+    if (e.status === 409 || e.status === 400) await loadProducts(true);
+  } finally { saving = false; updateChange(); }
+}
+$('#submit').addEventListener('click', submitOrder);
+$('#received').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitOrder(); });
+
+function showDone(o) {
+  $('#orderForm').hidden = true;
+  const v = $('#doneView');
+  v.hidden = false;
+  v.innerHTML = `
+    <div class="muted">Order #${o.id}${o.customer_name ? ' · ' + esc(o.customer_name) : ''}</div>
+    <div style="margin-top:12px">Change</div>
+    <div class="big change ok">${peso(o.change_due)}</div>
+    <div class="muted" style="margin:8px 0 16px">Total ${peso(o.total)} · Received ${peso(o.received)}</div>
+    <table style="font-size:14px;margin-bottom:16px">${o.items.map((i) =>
+      `<tr><td>${i.qty}× ${esc(i.product_name)} <span class="muted">${i.temp} ${i.size}</span></td><td class="num">${peso(i.line_total)}</td></tr>`).join('')}</table>
+    <button class="primary" id="next" style="width:100%;padding:12px">New order</button>`;
+  $('#next').addEventListener('click', newOrder);
+  $('#next').focus();
+}
+function newOrder() {
+  cart = []; $('#received').value = ''; $('#customer').value = '';
+  $('#doneView').hidden = true; $('#orderForm').hidden = false;
+  renderCart();
+}
+
+loadProducts();
+setInterval(() => loadProducts(true), 30000); // pick up price changes made on other devices
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadProducts(true); });
+</script>
+</body>
+</html>

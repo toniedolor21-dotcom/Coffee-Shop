@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Products & prices · Coffee POS</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>☕</text></svg>">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main id="root"></main>
+<script src="/common.js"></script>
+<script>
+header('admin');
+let rows = [];
+let dirty = false;
+
+requirePin($('#root'), init);
+
+async function init() {
+  $('#root').innerHTML = `
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0">Products & prices</h2><span class="spacer"></span>
+        <span id="status" class="muted"></span>
+        <button id="add">+ Add product</button>
+        <button class="primary" id="save" disabled>Save changes</button>
+      </div>
+      <p class="muted" style="margin-top:0;font-size:14px">Edit any price and press <b>Save changes</b>. Leave a price blank if that size is not sold.
+        Untick <b>On menu</b> to hide a product without losing its sales history. Past orders always keep the price they were sold at.</p>
+      <div style="overflow-x:auto"><table class="price-table">
+        <thead>
+          <tr><th rowspan="2"></th><th rowspan="2">Category</th><th rowspan="2">Item</th>
+            <th colspan="3" class="group" style="color:var(--hot)">Hot</th><th colspan="3" class="group" style="color:var(--cold)">Cold</th>
+            <th rowspan="2">On menu</th><th rowspan="2"></th></tr>
+          <tr>${[...SIZES, ...SIZES].map((s) => `<th class="num">${s}</th>`).join('')}</tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table></div>
+    </div>`;
+  $('#add').addEventListener('click', () => {
+    rows.push({ id: null, category: 'Coffee', name: '', active: true, prices: {} });
+    setDirty(); render();
+    $('#tbody tr:last-child input.name').focus();
+  });
+  $('#save').addEventListener('click', save);
+  $('#tbody').addEventListener('input', onInput);
+  $('#tbody').addEventListener('click', onClick);
+  rows = await api('/api/admin/products');
+  render();
+}
+
+function render() {
+  $('#tbody').innerHTML = rows.map((r, i) => r.deleted ? '' : `
+    <tr data-i="${i}" class="${r.active ? '' : 'inactive'}">
+      <td style="white-space:nowrap"><button data-move="-1" title="Move up" ${i === 0 ? 'disabled' : ''}>↑</button><button data-move="1" title="Move down" ${i === rows.length - 1 ? 'disabled' : ''}>↓</button></td>
+      <td><input class="cat" data-f="category" value="${esc(r.category)}"></td>
+      <td><input class="name" data-f="name" value="${esc(r.name)}" placeholder="Product name"></td>
+      ${TEMPS.flatMap((t) => SIZES.map((s) => {
+        const v = r.prices[`${t}|${s}`];
+        return `<td><input class="price num" type="number" min="0" step="any" inputmode="decimal" data-p="${t}|${s}" value="${v ?? ''}"></td>`;
+      })).join('')}
+      <td style="text-align:center"><input type="checkbox" data-f="active" ${r.active ? 'checked' : ''}></td>
+      <td><button class="danger" data-del title="Delete product">Delete</button></td>
+    </tr>`).join('');
+}
+
+function setDirty() { dirty = true; $('#save').disabled = false; $('#status').textContent = 'Unsaved changes'; }
+
+function onInput(e) {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const r = rows[Number(tr.dataset.i)];
+  if (e.target.dataset.p) r.prices[e.target.dataset.p] = e.target.value;
+  else if (e.target.dataset.f === 'active') { r.active = e.target.checked; tr.className = r.active ? '' : 'inactive'; }
+  else r[e.target.dataset.f] = e.target.value;
+  setDirty();
+}
+
+function onClick(e) {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const i = Number(tr.dataset.i);
+  if (e.target.dataset.move) {
+    const j = i + Number(e.target.dataset.move);
+    if (j < 0 || j >= rows.length) return;
+    [rows[i], rows[j]] = [rows[j], rows[i]];
+    setDirty(); render();
+  } else if (e.target.hasAttribute('data-del')) {
+    const r = rows[i];
+    if (!r.id) rows.splice(i, 1); else r.deleted = true;
+    setDirty(); render();
+    toast(`${r.name || 'Product'} will be removed when you save. Past sales are kept.`);
+  }
+}
+
+async function save() {
+  $('#save').disabled = true;
+  $('#status').textContent = 'Saving…';
+  try {
+    rows = await api('/api/admin/products', { method: 'PUT', body: rows });
+    dirty = false; render();
+    $('#status').textContent = 'Saved';
+    toast('Prices saved. Order screens update within 30 seconds.');
+  } catch (e) {
+    toast(e.message, true); setDirty();
+  }
+}
+
+window.addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
+</script>
+</body>
+</html>

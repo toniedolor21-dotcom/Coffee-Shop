@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales reports · Coffee POS</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>☕</text></svg>">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main id="root"></main>
+<script src="/common.js"></script>
+<script>
+header('reports');
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const pad = (n) => String(n).padStart(2, '0');
+const now = new Date();
+const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+let tab = 'daily';
+let last = null;
+
+requirePin($('#root'), init);
+
+function init() {
+  $('#root').innerHTML = `
+    <div class="tabs noprint">
+      <button data-tab="daily">Daily</button><button data-tab="monthly">Monthly</button>
+      <button data-tab="annual">Annual</button><button data-tab="orders">Orders list</button>
+      <span class="spacer"></span>
+      <span id="picker"></span>
+      <button id="csv">Export CSV</button><button id="print">Print</button>
+    </div>
+    <div id="out"></div>`;
+  $('.tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) { tab = b.dataset.tab; load(); } });
+  $('#print').addEventListener('click', () => window.print());
+  $('#csv').addEventListener('click', exportCsv);
+  load();
+}
+
+function picker() {
+  const el = $('#picker');
+  if (tab === 'daily') el.innerHTML = `<input type="month" id="month" value="${el.dataset.month || today.slice(0, 7)}">`;
+  else if (tab === 'monthly') el.innerHTML = `<input type="number" id="year" min="2000" max="2100" style="width:100px" value="${el.dataset.year || today.slice(0, 4)}">`;
+  else if (tab === 'orders') el.innerHTML = `<input type="date" id="date" value="${el.dataset.date || today}">`;
+  else el.innerHTML = '';
+  el.querySelector('input')?.addEventListener('change', (e) => { el.dataset[e.target.id] = e.target.value; load(); });
+}
+
+async function load() {
+  document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  picker();
+  const out = $('#out');
+  try {
+    if (tab === 'orders') return renderOrders(await api('/api/orders?date=' + ($('#date').value || today)));
+    const q = tab === 'daily' ? `&month=${$('#month').value || today.slice(0, 7)}` : tab === 'monthly' ? `&year=${$('#year').value}` : '';
+    renderReport(await api(`/api/reports?type=${tab}${q}`));
+  } catch (e) {
+    if (e.status === 401) { sessionStorage.removeItem('adminPin'); location.reload(); }
+    out.innerHTML = `<p class="card">${esc(e.message)}</p>`;
+  }
+}
+
+function periodsFor(r) {
+  // Show every day / month in the range, including ones with no sales.
+  const map = new Map(r.rows.map((x) => [x.period, x]));
+  let keys = [];
+  if (r.type === 'daily') {
+    const [y, m] = r.prefix.split('-').map(Number);
+    const days = new Date(y, m, 0).getDate();
+    for (let d = 1; d <= days; d++) { const k = `${r.prefix}-${pad(d)}`; if (k <= today) keys.push(k); }
+  } else if (r.type === 'monthly') {
+    for (let m = 1; m <= 12; m++) { const k = `${r.prefix}-${pad(m)}`; if (k <= today.slice(0, 7)) keys.push(k); }
+  } else keys = r.rows.map((x) => x.period);
+  return keys.map((k) => map.get(k) || { period: k, orders: 0, sales: 0, cups: 0 });
+}
+
+function label(type, p) {
+  if (type === 'daily') { const d = new Date(p + 'T00:00:00'); return d.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' }); }
+  if (type === 'monthly') return MONTHS[Number(p.slice(5, 7)) - 1] + ' ' + p.slice(0, 4);
+  return p;
+}
+
+function renderReport(r) {
+  const list = periodsFor(r);
+  const max = Math.max(1, ...list.map((x) => x.sales));
+  const title = r.type === 'daily' ? `Daily sales · ${MONTHS[Number(r.prefix.slice(5)) - 1]} ${r.prefix.slice(0, 4)}`
+    : r.type === 'monthly' ? `Monthly sales · ${r.prefix}` : 'Annual sales · all years';
+  const t = r.totals;
+  last = { name: `${r.type}-sales${r.prefix ? '-' + r.prefix : ''}`,
+    rows: [['Period', 'Orders', 'Cups', 'Sales'], ...list.map((x) => [x.period, x.orders, x.cups, x.sales.toFixed(2)]), ['Total', t.orders, t.cups, t.sales.toFixed(2)]] };
+  $('#out').innerHTML = `
+    <h2>${title}</h2>
+    <div class="kpis">
+      <div class="card kpi"><div class="v">${peso(t.sales)}</div><div class="l">Total sales</div></div>
+      <div class="card kpi"><div class="v">${t.orders}</div><div class="l">Orders</div></div>
+      <div class="card kpi"><div class="v">${t.cups}</div><div class="l">Cups sold</div></div>
+      <div class="card kpi"><div class="v">${peso(t.orders ? t.sales / t.orders : 0)}</div><div class="l">Average order</div></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><table>
+        <thead><tr><th>${r.type === 'daily' ? 'Day' : r.type === 'monthly' ? 'Month' : 'Year'}</th><th class="num">Orders</th><th class="num">Cups</th><th class="num">Sales</th><th style="width:30%"></th></tr></thead>
+        <tbody>${list.length ? list.slice().reverse().map((x) => `<tr>
+          <td>${label(r.type, x.period)}</td><td class="num">${x.orders}</td><td class="num">${x.cups}</td><td class="num">${peso(x.sales)}</td>
+          <td><div class="bar" style="width:${(x.sales / max) * 100}%;${x.sales ? '' : 'opacity:.2'}"></div></td></tr>`).join('')
+          : '<tr><td colspan="5" class="muted">No sales yet</td></tr>'}</tbody>
+        <tfoot><tr><th>Total</th><th class="num">${t.orders}</th><th class="num">${t.cups}</th><th class="num">${peso(t.sales)}</th><th></th></tr></tfoot>
+      </table></div>
+      <div class="card"><h2>Best sellers</h2><table>
+        <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Sales</th></tr></thead>
+        <tbody>${r.products.length ? r.products.map((p) => `<tr><td>${esc(p.name)} <span class="tag ${p.temp}">${p.temp}</span> <span class="muted">${p.size}</span></td>
+          <td class="num">${p.qty}</td><td class="num">${peso(p.sales)}</td></tr>`).join('') : '<tr><td colspan="3" class="muted">No sales yet</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+}
+
+function renderOrders(orders) {
+  const paid = orders.filter((o) => o.status === 'paid');
+  const sum = paid.reduce((s, o) => s + o.total, 0);
+  last = { name: `orders-${$('#date').value}`, rows: [['Order #', 'Time', 'Customer', 'Items', 'Total', 'Received', 'Change', 'Status'],
+    ...orders.map((o) => [o.id, o.created_at.slice(11), o.customer_name || '', o.items.map((i) => `${i.qty}x ${i.product_name} ${i.temp} ${i.size}`).join('; '),
+      o.total.toFixed(2), o.received.toFixed(2), o.change_due.toFixed(2), o.status])] };
+  $('#out').innerHTML = `
+    <h2>Orders on ${new Date($('#date').value + 'T00:00:00').toLocaleDateString('en-PH', { dateStyle: 'full' })}</h2>
+    <p class="muted">${paid.length} paid order(s), ${peso(sum)}${orders.length > paid.length ? ` · ${orders.length - paid.length} voided` : ''}</p>
+    <div class="card" style="overflow-x:auto"><table>
+      <thead><tr><th>#</th><th>Time</th><th>Customer</th><th>Items</th><th class="num">Total</th><th class="num">Received</th><th class="num">Change</th><th class="noprint"></th></tr></thead>
+      <tbody>${orders.length ? orders.map((o) => `<tr style="${o.status === 'void' ? 'opacity:.55' : ''}">
+        <td>${o.id}</td><td>${o.created_at.slice(11, 16)}</td><td>${esc(o.customer_name || '')}</td>
+        <td style="font-size:14px">${o.items.map((i) => `${i.qty}× ${esc(i.product_name)} <span class="muted">${i.temp} ${i.size} @ ${peso(i.unit_price)}</span>`).join('<br>')}</td>
+        <td class="num">${peso(o.total)}</td><td class="num">${peso(o.received)}</td><td class="num">${peso(o.change_due)}</td>
+        <td class="noprint">${o.status === 'void' ? `<span class="tag void">Void</span> <button data-unvoid="${o.id}">Restore</button>` : `<button class="danger" data-void="${o.id}">Void</button>`}</td>
+      </tr>`).join('') : '<tr><td colspan="8" class="muted">No orders on this day</td></tr>'}</tbody>
+    </table></div>`;
+  $('#out').onclick = async (e) => {
+    const id = e.target.dataset.void || e.target.dataset.unvoid;
+    if (!id) return;
+    const action = e.target.dataset.void ? 'void' : 'unvoid';
+    if (action === 'void' && e.target.textContent !== 'Tap again to void') { e.target.textContent = 'Tap again to void'; return; }
+    try { await api(`/api/orders/${id}/${action}`, { method: 'POST' }); toast(action === 'void' ? `Order #${id} voided` : `Order #${id} restored`); load(); }
+    catch (err) { toast(err.message, true); }
+  };
+}
+
+function exportCsv() {
+  if (!last) return;
+  const csv = last.rows.map((r) => r.map((v) => `"${String(v).replace(/^([=+\-@])/, "'$1").replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
+  a.download = last.name + '.csv';
+  a.click();
+}
+</script>
+</body>
+</html>
