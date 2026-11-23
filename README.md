@@ -6,6 +6,7 @@ A simple order-taking app for a coffee shop. One computer runs it, and any phone
 
 - **Take order** (`/`): tap a product's Hot/Cold size to add it, adjust quantities, optional customer name, total to pay, amount received (with quick cash buttons), and change. An order can't be completed if the cash received is short.
 - **Products & prices** (`/admin`): edit prices in a grid like your spreadsheet, add, rename, reorder, hide or delete products. Leave a price blank if that size isn't sold. Changes reach every order screen within 30 seconds.
+- **Recipes**: every product has a **Recipe** button on the order screen showing its ingredients (amounts per size) and how to make it, separately for Hot and Cold. Staff don't need the PIN to view them. In a cart line, **Recipe** highlights that exact size. Admins edit recipes with the **Recipe** button in Products & prices. The original menu comes with starter recipes; these are placeholders, so check and adjust them to your shop's real recipes.
 - **Sales reports** (`/reports`): daily (by month), monthly (by year) and annual sales, with orders, cups sold, average order and best sellers. There is also a list of each day's orders where you can void a mistaken order. Reports can be exported to CSV (opens in Excel) or printed.
 
 - **AI assistant** (optional, on Sales reports): a one-button AI summary of the report you are viewing, and an "Ask about your sales" box for questions like "What sold best last week?". Works with OpenAI (default) or Claude. It is off until you add an API key, and the order screen never uses it.
@@ -65,7 +66,7 @@ What is sent to the AI: sales totals by day, month and year, product names, pric
 
 ## Your data and backups
 
-All products, prices and orders are in one file: `data/coffee.db`. To back up, copy that file (best while the app is stopped). To restore, put it back. Deleting it resets the app to the original menu from the spreadsheet with no sales.
+All products, prices, recipes and orders are in one file: `data/coffee.db`. To back up, copy that file (best while the app is stopped). To restore, put it back. Deleting it resets the app to the original menu from the spreadsheet with no sales.
 
 ## Putting it online (optional)
 
@@ -78,4 +79,6 @@ If devices need to work from different places (not one Wi-Fi), host it on any se
 - `public/admin.html`: products & prices
 - `ai.js`: optional AI assistant (OpenAI or Claude, built-in fetch, no packages)
 - `public/reports.html`: sales reports, orders list and the AI summary and questions
+- `recipes.js`, `recipes-seed.js`: recipe storage and API, and the starter recipes
+- `public/recipes.js`: recipe viewer and editor
 - `public/app.css`, `public/common.js`: shared styles and helpers
