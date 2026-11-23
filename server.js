@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
+const ai = require('./ai');
 
 const PORT = Number(process.env.PORT || 3000);
 const ADMIN_PIN = String(process.env.ADMIN_PIN || '1234');
@@ -57,6 +58,7 @@ db.exec(`
     line_total REAL NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);
+  CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 `);
 
 // Seed from "Coffee Product and Price.xlsx" on first run.
@@ -243,6 +245,101 @@ function listOrders(q) {
   return orders;
 }
 
+// ---------- AI assistant (optional, admin only) ----------
+const AI_SETTINGS = ['provider', ...Object.keys(ai.PROVIDERS).flatMap((id) => [id + '_key', id + '_model'])];
+function aiSettings() {
+  const out = {};
+  for (const r of db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all()) out[r.key.slice(3)] = r.value;
+  return out;
+}
+const aiConfig = () => ai.resolve(aiSettings());
+function aiStatus() {
+  const s = aiSettings();
+  const cfg = ai.resolve(s);
+  const keys = {};
+  for (const id of Object.keys(ai.PROVIDERS)) {
+    const k = ai.resolve({ ...s, provider: id });
+    keys[id] = { set: !!k.key, source: k.keySource, hint: ai.maskKey(k.key), model: s[id + '_model'] || '' };
+  }
+  return { enabled: cfg.enabled, provider: cfg.provider, label: cfg.label || '', model: cfg.model || '', problem: cfg.problem || '',
+    savedProvider: s.provider || '', keys,
+    providers: Object.fromEntries(Object.entries(ai.PROVIDERS).map(([id, p]) => [id, { label: p.label, defaultModel: p.defaultModel }])) };
+}
+function saveAiSettings(body) {
+  const set = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+  const del = db.prepare('DELETE FROM settings WHERE key = ?');
+  if (body.provider !== undefined && !['', 'off', ...Object.keys(ai.PROVIDERS)].includes(body.provider)) throw new HttpError(400, 'Unknown AI provider');
+  for (const k of AI_SETTINGS) {
+    if (body[k] === undefined) continue;          // not sent: keep as is (keys are never sent back to the browser)
+    const v = String(body[k] ?? '').trim().slice(0, 500);
+    if (v) set.run('ai_' + k, v); else del.run('ai_' + k);
+  }
+}
+
+// Data the AI may see: totals and product names only. Customer names are never sent.
+function weekdayHours(since) {
+  return db.prepare(
+    `SELECT strftime('%w', created_at) AS weekday, substr(created_at, 12, 2) AS hour, COUNT(*) AS orders, ROUND(SUM(total), 2) AS sales
+     FROM orders WHERE status = 'paid' AND created_at >= ? GROUP BY weekday, hour ORDER BY weekday, hour`
+  ).all(since).map((r) => ({ ...r, weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][Number(r.weekday)] }));
+}
+function menuForAi() {
+  return listProducts(true).map((p) => ({ name: p.name, category: p.category, onMenu: p.active, prices: p.prices }));
+}
+function shiftPeriod(type, prefix) {
+  if (type === 'daily') { const [y, m] = prefix.split('-').map(Number); const d = new Date(y, m - 2, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; }
+  if (type === 'monthly') return String(Number(prefix) - 1);
+  return null;
+}
+function summaryData(body) {
+  const type = String(body.type || 'daily');
+  const q = new URLSearchParams();
+  q.set('type', type);
+  if (body.month) q.set('month', String(body.month));
+  if (body.year) q.set('year', String(body.year));
+  const r = report(q);
+  const data = { today: localNow().slice(0, 10), report: r };
+  const prev = shiftPeriod(r.type, r.prefix);
+  if (prev) {
+    const pq = new URLSearchParams({ type: r.type, [r.type === 'daily' ? 'month' : 'year']: prev });
+    const pr = report(pq);
+    data.previousPeriod = { prefix: pr.prefix, totals: pr.totals, topProducts: pr.products.slice(0, 10) };
+  }
+  if (r.type === 'daily') data.busyTimes = db.prepare(
+    `SELECT substr(created_at, 12, 2) AS hour, COUNT(*) AS orders FROM orders WHERE status = 'paid' AND created_at LIKE ? || '%' GROUP BY hour ORDER BY hour`
+  ).all(r.prefix);
+  return data;
+}
+function askContext() {
+  const now = localNow();
+  const d = new Date(); d.setDate(d.getDate() - 120);
+  const since = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const m = new Date(); m.setMonth(m.getMonth() - 12, 1);
+  const since13 = `${m.getFullYear()}-${pad(m.getMonth() + 1)}`;
+  const totals = (len, from) => db.prepare(
+    `SELECT substr(o.created_at, 1, ${len}) AS period, COUNT(*) AS orders, ROUND(SUM(o.total), 2) AS sales, SUM(c.cups) AS cups
+     FROM orders o JOIN (SELECT order_id, SUM(qty) AS cups FROM order_items GROUP BY order_id) c ON c.order_id = o.id
+     WHERE o.status = 'paid' AND o.created_at >= ? GROUP BY period ORDER BY period`
+  ).all(from);
+  return {
+    now, timezone: process.env.TZ,
+    menu: menuForAi(),
+    yearlyTotals: totals(4, ''),
+    monthlyTotals: totals(7, ''),
+    dailyTotalsLast120Days: totals(10, since),
+    productSalesByMonthLast13Months: db.prepare(
+      `SELECT substr(o.created_at, 1, 7) AS month, i.product_name AS name, i.temp, i.size, SUM(i.qty) AS qty, ROUND(SUM(i.line_total), 2) AS sales
+       FROM order_items i JOIN orders o ON o.id = i.order_id WHERE o.status = 'paid' AND o.created_at >= ?
+       GROUP BY month, i.product_name, i.temp, i.size ORDER BY month, sales DESC`
+    ).all(since13),
+    ordersByWeekdayAndHourLast120Days: weekdayHours(since),
+  };
+}
+async function aiCall(fn) {
+  try { return { text: await fn() }; }
+  catch (e) { if (e instanceof ai.AiError) throw new HttpError(e.status, e.message); throw e; }
+}
+
 // ---------- routing ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
 
@@ -261,6 +358,16 @@ async function handle(req, res) {
     if (m === 'PUT' && p === '/api/admin/products') { saveProducts(await readJson(req)); return send(res, 200, listProducts(true)); }
     if (m === 'GET' && p === '/api/orders') return send(res, 200, listOrders(url.searchParams));
     if (m === 'GET' && p === '/api/reports') return send(res, 200, report(url.searchParams));
+    if (m === 'GET' && p === '/api/admin/ai') return send(res, 200, aiStatus());
+    if (m === 'PUT' && p === '/api/admin/ai') { saveAiSettings(await readJson(req)); return send(res, 200, aiStatus()); }
+    if (m === 'POST' && p === '/api/admin/ai/test') return send(res, 200, await aiCall(() => ai.chat(aiConfig(), 'Reply with exactly: Connected', [{ role: 'user', content: 'Test' }])));
+    if (m === 'POST' && p === '/api/ai/summary') { const b = await readJson(req); return send(res, 200, await aiCall(() => ai.summarize(aiConfig(), summaryData(b)))); }
+    if (m === 'POST' && p === '/api/ai/ask') {
+      const b = await readJson(req);
+      const question = String(b.question || '').trim().slice(0, 1000);
+      if (!question) throw new HttpError(400, 'Type a question first');
+      return send(res, 200, await aiCall(() => ai.ask(aiConfig(), askContext(), question, Array.isArray(b.history) ? b.history : [])));
+    }
     const vm = p.match(/^\/api\/orders\/(\d+)\/(void|unvoid)$/);
     if (m === 'POST' && vm) {
       const r = db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(vm[2] === 'void' ? 'void' : 'paid', Number(vm[1]));
@@ -293,4 +400,6 @@ http.createServer((req, res) => {
   console.log(`Coffee POS running on http://localhost:${PORT}`);
   if (lan.length) console.log(`Other devices on the same Wi-Fi can open: ${lan.join('  ')}`);
   if (ADMIN_PIN === '1234') console.log('Admin PIN is the default 1234. Set ADMIN_PIN to change it.');
+  const cfg = aiConfig();
+  console.log(cfg.enabled ? `AI assistant: on (${cfg.label}, ${cfg.model})` : 'AI assistant: off (optional, set it up in Products & prices)');
 });

@@ -91,3 +91,10 @@ th { font-size: 13px; color: var(--muted); font-weight: 600; }
   .pos { padding-bottom: 70px; }
   .cart { position: static; }
 }
+
+/* AI assistant (Sales reports) */
+.ai-text { line-height: 1.5; margin-top: 6px; }
+.ai-text:empty { display: none; }
+.ai-msg { padding: 8px 0; border-top: 1px solid var(--line); }
+.ai-msg:first-child { border-top: 0; }
+.ai-msg.user .ai-text { font-weight: 600; }
