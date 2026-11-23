@@ -39,7 +39,8 @@ async function init() {
         </thead>
         <tbody id="tbody"></tbody>
       </table></div>
-    </div>`;
+    </div>
+    <div class="card" id="ai" style="margin-top:16px"></div>`;
   $('#add').addEventListener('click', () => {
     rows.push({ id: null, category: 'Coffee', name: '', active: true, prices: {} });
     setDirty(); render();
@@ -50,6 +51,59 @@ async function init() {
   $('#tbody').addEventListener('click', onClick);
   rows = await api('/api/admin/products');
   render();
+  loadAi();
+}
+
+// ---------- AI assistant settings ----------
+let aiState = null;
+async function loadAi() {
+  try { aiState = await api('/api/admin/ai'); renderAi(); }
+  catch (e) { $('#ai').innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+}
+function renderAi() {
+  const s = aiState;
+  const sel = s.savedProvider || (s.enabled ? s.provider : 'openai');
+  const opts = [...Object.entries(s.providers), ['off', { label: 'Off' }]];
+  const pid = sel === 'off' ? null : sel;
+  const key = pid ? s.keys[pid] : null;
+  const status = s.enabled ? `<span style="color:var(--ok)">● On</span> using ${esc(s.label)} (${esc(s.model)})`
+    : `<span class="muted">● Off</span>${s.problem ? ' · ' + esc(s.problem) : ''}`;
+  $('#ai').innerHTML = `
+    <div class="row" style="margin-bottom:8px"><h2 style="margin:0">AI assistant</h2><span class="spacer"></span><span>${status}</span></div>
+    <p class="muted" style="margin-top:0;font-size:14px">Optional. Adds an AI sales summary and an "Ask about your sales" box to the Sales reports page.
+      It needs internet and an API key from your AI provider, which charges a small amount per question. Only sales totals and product names are sent, never customer names.
+      Taking orders never uses AI and keeps working offline.</p>
+    <div class="row" style="align-items:end">
+      <label>Provider<br><select id="aiProvider">${opts.map(([id, p]) => `<option value="${id}" ${id === sel ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>
+      ${pid ? `<label style="flex:1;min-width:220px">API key<br><input id="aiKey" type="password" autocomplete="off" style="width:100%"
+          placeholder="${key.set ? (key.source === 'saved' ? 'Saved: ' + esc(key.hint) + ' (leave blank to keep)' : 'Set on the server: ' + esc(key.hint)) : 'Paste your API key'}"></label>
+        <label>Model<br><input id="aiModel" value="${esc(key.model)}" placeholder="${esc(s.providers[pid].defaultModel)}" style="width:170px"></label>` : ''}
+      <button class="primary" id="aiSave">Save</button>
+      ${s.enabled ? '<button id="aiTest">Test connection</button>' : ''}
+      ${key?.source === 'saved' ? '<button class="danger" id="aiClear">Remove key</button>' : ''}
+    </div>
+    <p class="muted" style="font-size:13px;margin-bottom:0">Get a key at platform.openai.com (OpenAI) or console.anthropic.com (Claude). The key is stored only on this computer, in the POS database.</p>`;
+  $('#aiProvider').addEventListener('change', (e) => { aiState.savedProvider = e.target.value; renderAi(); });
+  $('#aiSave').addEventListener('click', saveAi);
+  $('#aiTest')?.addEventListener('click', testAi);
+  $('#aiClear')?.addEventListener('click', () => saveAi(null, true));
+}
+async function saveAi(_e, clearKey) {
+  const provider = $('#aiProvider').value;
+  const body = { provider };
+  if (provider !== 'off') {
+    const k = $('#aiKey').value.trim();
+    if (k || clearKey) body[provider + '_key'] = clearKey ? '' : k;
+    body[provider + '_model'] = $('#aiModel').value.trim();
+  }
+  try { aiState = await api('/api/admin/ai', { method: 'PUT', body }); renderAi(); toast(clearKey ? 'API key removed' : 'AI settings saved'); }
+  catch (e) { toast(e.message, true); }
+}
+async function testAi() {
+  const b = $('#aiTest'); b.disabled = true; b.textContent = 'Testing…';
+  try { await api('/api/admin/ai/test', { method: 'POST' }); toast('Connected to ' + aiState.label); }
+  catch (e) { toast(e.message, true); }
+  b.disabled = false; b.textContent = 'Test connection';
 }
 
 function render() {

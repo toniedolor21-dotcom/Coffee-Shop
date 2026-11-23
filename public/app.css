@@ -109,3 +109,10 @@ th { font-size: 13px; color: var(--muted); font-weight: 600; }
 .recipe-edit input { width: 100%; min-width: 70px; }
 .recipe-edit input[data-k=item] { min-width: 170px; }
 .recipe-dialog textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; resize: vertical; }
+
+/* AI assistant (Sales reports) */
+.ai-text { line-height: 1.5; margin-top: 6px; }
+.ai-text:empty { display: none; }
+.ai-msg { padding: 8px 0; border-top: 1px solid var(--line); }
+.ai-msg:first-child { border-top: 0; }
+.ai-msg.user .ai-text { font-weight: 600; }
