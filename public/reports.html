@@ -18,6 +18,8 @@ const now = new Date();
 const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 let tab = 'daily';
 let last = null;
+let aiOn = false;
+const chatLog = [];   // [{ role, content }] for "Ask about your sales"
 
 requirePin($('#root'), init);
 
@@ -34,7 +36,73 @@ function init() {
   $('.tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) { tab = b.dataset.tab; load(); } });
   $('#print').addEventListener('click', () => window.print());
   $('#csv').addEventListener('click', exportCsv);
+  api('/api/admin/ai').then((s) => { aiOn = s.enabled; if (tab !== 'orders') load(); }).catch(() => {});
   load();
+}
+
+// ---------- AI (optional; hidden when no API key is set) ----------
+function aiText(t) {
+  return esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+}
+function aiHtml(r) {
+  if (!aiOn) return '';
+  return `
+    <div class="card ai-card" style="margin:12px 0">
+      <div class="row"><b>✨ AI summary</b><span class="spacer"></span>
+        <button class="noprint" id="aiSum">${r.totals.orders ? 'Summarize this report' : 'No sales to summarize'}</button></div>
+      <div id="aiSumOut" class="ai-text"></div>
+    </div>`;
+}
+function askHtml() {
+  if (!aiOn) return `<p class="muted noprint" style="font-size:14px;margin-top:16px">Tip: turn on the AI assistant in Products &amp; prices to get sales summaries and ask questions about your sales.</p>`;
+  return `
+    <div class="card noprint" style="margin-top:16px">
+      <b>💬 Ask about your sales</b>
+      <p class="muted" style="font-size:14px;margin:4px 0 8px">For example: "What sold best last week?", "Which day in October had the most orders?", "What time of day is busiest?"</p>
+      <div id="chat">${chatLog.map(chatLine).join('')}</div>
+      <form id="askForm" class="row" style="margin-top:8px">
+        <input id="askQ" maxlength="1000" autocomplete="off" placeholder="Type a question" style="flex:1;min-width:200px">
+        <button class="primary" id="askBtn">Ask</button>
+        ${chatLog.length ? '<button type="button" id="askClear">Clear</button>' : ''}
+      </form>
+    </div>`;
+}
+function chatLine(m) {
+  return `<div class="ai-msg ${m.role}"><span class="muted" style="font-size:13px">${m.role === 'user' ? 'You' : 'AI'}</span><div class="ai-text">${aiText(m.content)}</div></div>`;
+}
+function wireAi(r) {
+  $('#aiSum')?.addEventListener('click', async (e) => {
+    if (!r.totals.orders) return;
+    const b = e.target; b.disabled = true; b.textContent = 'Thinking…';
+    $('#aiSumOut').innerHTML = '';
+    try {
+      const body = { type: r.type, month: r.type === 'daily' ? r.prefix : undefined, year: r.type === 'monthly' ? r.prefix : undefined };
+      const { text } = await api('/api/ai/summary', { method: 'POST', body });
+      $('#aiSumOut').innerHTML = aiText(text);
+      b.textContent = 'Summarize again';
+    } catch (err) { $('#aiSumOut').innerHTML = `<span style="color:var(--bad)">${esc(err.message)}</span>`; b.textContent = 'Try again'; }
+    b.disabled = false;
+  });
+  $('#askClear')?.addEventListener('click', () => { chatLog.length = 0; load(); });
+  $('#askForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const q = $('#askQ').value.trim();
+    if (!q) return;
+    const history = chatLog.slice();
+    chatLog.push({ role: 'user', content: q });
+    $('#chat').insertAdjacentHTML('beforeend', chatLine(chatLog.at(-1)) + '<div class="ai-msg muted" id="thinking">Thinking…</div>');
+    $('#askQ').value = ''; $('#askBtn').disabled = true;
+    try {
+      const { text } = await api('/api/ai/ask', { method: 'POST', body: { question: q, history } });
+      chatLog.push({ role: 'assistant', content: text });
+      $('#thinking').outerHTML = chatLine(chatLog.at(-1));
+    } catch (err) {
+      chatLog.pop();
+      $('#thinking').outerHTML = `<div class="ai-msg" style="color:var(--bad)">${esc(err.message)}</div>`;
+      $('#askQ').value = q;
+    }
+    $('#askBtn').disabled = false; $('#askQ').focus();
+  });
 }
 
 function picker() {
@@ -90,6 +158,7 @@ function renderReport(r) {
     rows: [['Period', 'Orders', 'Cups', 'Sales'], ...list.map((x) => [x.period, x.orders, x.cups, x.sales.toFixed(2)]), ['Total', t.orders, t.cups, t.sales.toFixed(2)]] };
   $('#out').innerHTML = `
     <h2>${title}</h2>
+    ${aiHtml(r)}
     <div class="kpis">
       <div class="card kpi"><div class="v">${peso(t.sales)}</div><div class="l">Total sales</div></div>
       <div class="card kpi"><div class="v">${t.orders}</div><div class="l">Orders</div></div>
@@ -110,7 +179,9 @@ function renderReport(r) {
         <tbody>${r.products.length ? r.products.map((p) => `<tr><td>${esc(p.name)} <span class="tag ${p.temp}">${p.temp}</span> <span class="muted">${p.size}</span></td>
           <td class="num">${p.qty}</td><td class="num">${peso(p.sales)}</td></tr>`).join('') : '<tr><td colspan="3" class="muted">No sales yet</td></tr>'}</tbody>
       </table></div>
-    </div>`;
+    </div>
+    ${askHtml()}`;
+  wireAi(r);
 }
 
 function renderOrders(orders) {

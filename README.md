@@ -8,6 +8,8 @@ A simple order-taking app for a coffee shop. One computer runs it, and any phone
 - **Products & prices** (`/admin`): edit prices in a grid like your spreadsheet, add, rename, reorder, hide or delete products. Leave a price blank if that size isn't sold. Changes reach every order screen within 30 seconds.
 - **Sales reports** (`/reports`): daily (by month), monthly (by year) and annual sales, with orders, cups sold, average order and best sellers. There is also a list of each day's orders where you can void a mistaken order. Reports can be exported to CSV (opens in Excel) or printed.
 
+- **AI assistant** (optional, on Sales reports): a one-button AI summary of the report you are viewing, and an "Ask about your sales" box for questions like "What sold best last week?". Works with OpenAI (default) or Claude. It is off until you add an API key, and the order screen never uses it.
+
 Every order stores the price at the time of sale, so changing a price never changes past orders or reports.
 
 Products & prices and Sales reports need the **admin PIN** (default `1234`). The order screen does not.
@@ -42,6 +44,25 @@ ADMIN_PIN=4826 node server.js
 
 Other settings: `PORT` (default 3000), `TZ` (default `Asia/Manila`), `DB_FILE` (default `data/coffee.db`).
 
+## AI assistant (optional)
+
+The app works fully offline without it. To turn it on you need internet and an API key:
+
+- OpenAI: create a key at https://platform.openai.com/api-keys
+- Claude: create a key at https://console.anthropic.com
+
+Then open **Products & prices**, scroll to **AI assistant**, choose the provider, paste the key and press **Save**. Use **Test connection** to check it. The key is stored only in `data/coffee.db` on the server computer. Leave Model blank to use the default (`gpt-5-mini` for OpenAI, `claude-haiku-5-5` for Claude).
+
+You can set it with environment variables instead (settings saved on the Admin page take priority):
+
+```
+set OPENAI_API_KEY=sk-... && node server.js
+```
+
+Variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AI_PROVIDER` (`openai`, `anthropic` or `off`), `AI_MODEL`.
+
+What is sent to the AI: sales totals by day, month and year, product names, prices and quantities, and order counts by hour. Customer names are never sent. Each summary or question costs a small amount on your provider account, usually well under ₱1.
+
 ## Your data and backups
 
 All products, prices and orders are in one file: `data/coffee.db`. To back up, copy that file (best while the app is stopped). To restore, put it back. Deleting it resets the app to the original menu from the spreadsheet with no sales.
@@ -55,5 +76,6 @@ If devices need to work from different places (not one Wi-Fi), host it on any se
 - `server.js`: the server, database and API (uses Node's built-in SQLite, no packages)
 - `public/index.html`: order screen
 - `public/admin.html`: products & prices
-- `public/reports.html`: sales reports and orders list
+- `ai.js`: optional AI assistant (OpenAI or Claude, built-in fetch, no packages)
+- `public/reports.html`: sales reports, orders list and the AI summary and questions
 - `public/app.css`, `public/common.js`: shared styles and helpers
